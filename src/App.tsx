@@ -95,33 +95,26 @@ export default function App() {
   }, [ready, refreshMetadataOutlines, showMetadataOutlines]);
 
   // ============================================================================
-  // ENTER KEY INTERCEPTION WORKAROUND
-  // V1 blocks a native paragraph split while the caret is inside an inline SDT.
-  // Capture Enter first so the anchor can be removed before asking V1 to split.
+  // METADATA RANGE SPLITTING WORKAROUND
+  // V1 has no Document API block split, so move the paragraph tail into a
+  // newly created paragraph, then anchor both ranges with one logical ID.
   // ============================================================================
-  useEffect(() => {
-    if (!ready) return;
-
-    const handleEnter = (event: KeyboardEvent) => {
-      if (event.key !== 'Enter' || event.shiftKey || event.altKey || event.ctrlKey || event.metaKey || event.isComposing) {
-        return;
-      }
-
+  const splitMetadataRangeAtCaret = useCallback(() => {
       const superdoc = superdocRef.current;
       const doc = superdoc?.activeEditor?.doc;
       const capture = uiRef.current?.selection.capture();
       const caret = capture?.selectionTarget ?? preservedSelectionRef.current;
       if (!doc) {
         console.warn('[metadata-enter] document unavailable');
-        return;
+        return false;
       }
       if (!caret || caret.start.kind !== 'text' || caret.end.kind !== 'text') {
         console.warn('[metadata-enter] no text caret', { capture, preserved: preservedSelectionRef.current });
-        return;
+        return false;
       }
       if (caret.start.blockId !== caret.end.blockId || caret.start.offset !== caret.end.offset) {
         console.warn('[metadata-enter] selection is not a collapsed caret', caret);
-        return;
+        return false;
       }
       const caretPoint = caret.start;
 
@@ -145,13 +138,13 @@ export default function App() {
       }
       if (!match) {
         console.warn('[metadata-enter] caret is not strictly inside a metadata range', { caret, entries, entriesAtCaret });
-        return;
+        return false;
       }
 
       const metadata = doc.metadata.get({ id: match.id });
       const resolved = doc.metadata.resolve({ id: match.id });
       const target = resolved?.target;
-      if (!metadata || !target || target.start.kind !== 'text' || target.end.kind !== 'text') return;
+      if (!metadata || !target || target.start.kind !== 'text' || target.end.kind !== 'text') return false;
 
       const logicalId =
         typeof metadata.payload === 'object'
@@ -167,25 +160,17 @@ export default function App() {
       const rightLength = target.end.offset - caret.start.offset;
       const originalStart = target.start;
 
-      // ========================================================================
-      // METADATA RANGE SPLITTING WORKAROUND
-      // V1 has no Document API block split, so move the paragraph tail into a
-      // newly created paragraph, then anchor both ranges with one logical ID.
-      // ========================================================================
-      event.preventDefault();
-      event.stopPropagation();
-
       const extractedBlock = doc.extract({}).blocks.find((block) => block.nodeId === originalStart.blockId);
       const blockNode = doc.getNodeById({ nodeId: originalStart.blockId });
       if (!extractedBlock || blockNode.address.kind !== 'block') {
         console.error('[metadata-enter] could not resolve the paragraph through the Document API');
-        return;
+        return true;
       }
       const rightParagraphText = extractedBlock.text.slice(caretPoint.offset);
 
       const removed = doc.metadata.remove({ id: match.id });
       console.info('[metadata-enter] remove anchor', removed);
-      if (!removed.success) return;
+      if (!removed.success) return true;
 
       const deletedTail = doc.delete({
         behavior: 'exact',
@@ -196,14 +181,14 @@ export default function App() {
         },
       });
       console.info('[metadata-enter] remove paragraph tail', deletedTail);
-      if (!deletedTail.success) return;
+      if (!deletedTail.success) return true;
 
       const createdParagraph = doc.create.paragraph({
         at: { kind: 'after', target: blockNode.address },
         text: rightParagraphText,
       });
       console.info('[metadata-enter] create right paragraph', createdParagraph);
-      if (!createdParagraph.success) return;
+      if (!createdParagraph.success) return true;
       const newBlockId = createdParagraph.paragraph.nodeId;
 
       const left = doc.metadata.attach({
@@ -230,11 +215,29 @@ export default function App() {
       });
       console.info('[metadata-enter] attach right anchor', right, { logicalId });
       void refreshMetadataOutlines();
+      return true;
+  }, [refreshMetadataOutlines]);
+
+  // ============================================================================
+  // ENTER KEY INTERCEPTION WORKAROUND
+  // V1 blocks a native paragraph split while the caret is inside an inline SDT.
+  // Capture Enter first and delegate the actual split to the Document API flow.
+  // ============================================================================
+  useEffect(() => {
+    if (!ready) return;
+
+    const handleEnter = (event: KeyboardEvent) => {
+      if (event.key !== 'Enter' || event.shiftKey || event.altKey || event.ctrlKey || event.metaKey || event.isComposing) {
+        return;
+      }
+      if (!splitMetadataRangeAtCaret()) return;
+      event.preventDefault();
+      event.stopPropagation();
     };
 
     window.addEventListener('keydown', handleEnter, true);
     return () => window.removeEventListener('keydown', handleEnter, true);
-  }, [ready, refreshMetadataOutlines]);
+  }, [ready, splitMetadataRangeAtCaret]);
 
   function importDocument(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -300,11 +303,7 @@ export default function App() {
 
   function splitMetadataAtCaret() {
     console.info('[metadata-enter] manual split button invoked');
-    mountRef.current?.dispatchEvent(new KeyboardEvent('keydown', {
-      bubbles: true,
-      cancelable: true,
-      key: 'Enter',
-    }));
+    splitMetadataRangeAtCaret();
   }
 
   return (
