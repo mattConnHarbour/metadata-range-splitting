@@ -20,8 +20,6 @@ Open the printed URL, select text within one paragraph, and choose **Wrap select
 ```bash
 pnpm typecheck
 pnpm build
-pnpm browsers
-pnpm test
 ```
 
 The demo intentionally uses `superdoc@1.46.1`, the latest V1 release.
