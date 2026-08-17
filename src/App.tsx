@@ -108,12 +108,11 @@ export default function App() {
       }
 
       const superdoc = superdocRef.current;
-      const editor = superdoc?.activeEditor;
-      const doc = editor?.doc;
+      const doc = superdoc?.activeEditor?.doc;
       const capture = uiRef.current?.selection.capture();
       const caret = capture?.selectionTarget ?? preservedSelectionRef.current;
-      if (!editor || !doc) {
-        console.warn('[metadata-enter] editor or document unavailable');
+      if (!doc) {
+        console.warn('[metadata-enter] document unavailable');
         return;
       }
       if (!caret || caret.start.kind !== 'text' || caret.end.kind !== 'text') {
@@ -170,76 +169,67 @@ export default function App() {
 
       // ========================================================================
       // METADATA RANGE SPLITTING WORKAROUND
-      // Unwrap the original anchor, restore the exact caret, and split the block.
-      // Then anchor both resulting ranges with payloads sharing one logical ID.
+      // V1 has no Document API block split, so move the paragraph tail into a
+      // newly created paragraph, then anchor both ranges with one logical ID.
       // ========================================================================
       event.preventDefault();
       event.stopPropagation();
+
+      const extractedBlock = doc.extract({}).blocks.find((block) => block.nodeId === originalStart.blockId);
+      const blockNode = doc.getNodeById({ nodeId: originalStart.blockId });
+      if (!extractedBlock || blockNode.address.kind !== 'block') {
+        console.error('[metadata-enter] could not resolve the paragraph through the Document API');
+        return;
+      }
+      const rightParagraphText = extractedBlock.text.slice(caretPoint.offset);
+
       const removed = doc.metadata.remove({ id: match.id });
       console.info('[metadata-enter] remove anchor', removed);
       if (!removed.success) return;
 
-      // The metadata removal dispatch must settle before V1 can split the run.
-      window.setTimeout(() => {
-        const restoredSelection = capture ? uiRef.current?.selection.restore(capture) : null;
-        console.info('[metadata-enter] restore caret after anchor removal', restoredSelection);
-        if (capture && !restoredSelection?.success) {
-          const restoredAnchor = doc.metadata.attach({
-            id: match.id,
-            namespace: metadata.namespace,
-            payload: metadata.payload,
-            target,
-          });
-          console.error('[metadata-enter] caret restore failed; restored original anchor', restoredAnchor);
-          return;
-        }
+      const deletedTail = doc.delete({
+        behavior: 'exact',
+        target: {
+          kind: 'selection',
+          start: caretPoint,
+          end: { kind: 'text', blockId: caretPoint.blockId, offset: extractedBlock.text.length },
+        },
+      });
+      console.info('[metadata-enter] remove paragraph tail', deletedTail);
+      if (!deletedTail.success) return;
 
-        const splitRun = editor.commands.splitRunToParagraph?.() ?? false;
-        const split = splitRun || editor.commands.splitBlock();
-        console.info('[metadata-enter] split paragraph', { split, splitRun });
-        if (!split) {
-          const restored = doc.metadata.attach({
-            id: match.id,
-            namespace: metadata.namespace,
-            payload: metadata.payload,
-            target,
-          });
-          console.error('[metadata-enter] split failed; restored original anchor', restored);
-          return;
-        }
+      const createdParagraph = doc.create.paragraph({
+        at: { kind: 'after', target: blockNode.address },
+        text: rightParagraphText,
+      });
+      console.info('[metadata-enter] create right paragraph', createdParagraph);
+      if (!createdParagraph.success) return;
+      const newBlockId = createdParagraph.paragraph.nodeId;
 
-        const afterSplit = uiRef.current?.selection.capture()?.selectionTarget;
-        if (!afterSplit || afterSplit.start.kind !== 'text' || afterSplit.start.blockId === originalStart.blockId) {
-          console.error('[metadata-enter] native paragraph split did not complete');
-          return;
-        }
-        const newStart = afterSplit.start;
+      const left = doc.metadata.attach({
+        id: `${match.id}-left-${crypto.randomUUID()}`,
+        namespace: metadata.namespace,
+        payload,
+        target: {
+          kind: 'selection',
+          start: originalStart,
+          end: { kind: 'text', blockId: originalStart.blockId, offset: originalStart.offset + leftLength },
+        },
+      });
+      console.info('[metadata-enter] attach left anchor', left);
 
-        const left = doc.metadata.attach({
-          id: `${match.id}-left-${crypto.randomUUID()}`,
-          namespace: metadata.namespace,
-          payload,
-          target: {
-            kind: 'selection',
-            start: originalStart,
-            end: { kind: 'text', blockId: originalStart.blockId, offset: originalStart.offset + leftLength },
-          },
-        });
-        console.info('[metadata-enter] attach left anchor', left);
-
-        const right = doc.metadata.attach({
-          id: `${match.id}-right-${crypto.randomUUID()}`,
-          namespace: metadata.namespace,
-          payload,
-          target: {
-            kind: 'selection',
-            start: { kind: 'text', blockId: newStart.blockId, offset: 0 },
-            end: { kind: 'text', blockId: newStart.blockId, offset: rightLength },
-          },
-        });
-        console.info('[metadata-enter] attach right anchor', right, { logicalId });
-        void refreshMetadataOutlines();
-      }, 0);
+      const right = doc.metadata.attach({
+        id: `${match.id}-right-${crypto.randomUUID()}`,
+        namespace: metadata.namespace,
+        payload,
+        target: {
+          kind: 'selection',
+          start: { kind: 'text', blockId: newBlockId, offset: 0 },
+          end: { kind: 'text', blockId: newBlockId, offset: rightLength },
+        },
+      });
+      console.info('[metadata-enter] attach right anchor', right, { logicalId });
+      void refreshMetadataOutlines();
     };
 
     window.addEventListener('keydown', handleEnter, true);
