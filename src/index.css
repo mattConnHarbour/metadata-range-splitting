@@ -1,0 +1,86 @@
+html,
+body,
+#root {
+  min-height: 100%;
+  margin: 0;
+}
+
+.document-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.75rem;
+  padding: 0.625rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.75rem;
+  background: rgb(255 255 255 / 92%);
+  box-shadow: 0 8px 24px rgb(15 23 42 / 8%);
+}
+
+.action-button {
+  min-height: 2.375rem;
+  padding: 0.5rem 0.875rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.5rem;
+  background: #fff;
+  color: #0f172a;
+  font: 600 0.875rem/1 system-ui, sans-serif;
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease,
+    transform 120ms ease;
+}
+
+.action-button:hover:not(:disabled) {
+  border-color: #94a3b8;
+  box-shadow: 0 3px 10px rgb(15 23 42 / 10%);
+  transform: translateY(-1px);
+}
+
+.action-button:focus-visible {
+  outline: 3px solid rgb(59 130 246 / 25%);
+  outline-offset: 2px;
+}
+
+.action-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.action-button--primary {
+  border-color: #2563eb;
+  background: #2563eb;
+  color: #fff;
+}
+
+.action-button--toggle[aria-pressed='true'] {
+  border-color: #f97316;
+  background: #fff7ed;
+  color: #c2410c;
+}
+
+.metadata-status {
+  margin: 0 0.75rem 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+  background: #f8fafc;
+  color: #4b5563;
+  font: 0.875rem/1.4 system-ui, sans-serif;
+}
+
+.metadata-outline-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  pointer-events: none;
+}
+
+.metadata-outline {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid #f97316;
+  border-radius: 3px;
+  background: rgb(249 115 22 / 8%);
+}
