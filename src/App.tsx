@@ -150,7 +150,7 @@ export default function App() {
 
     // Anchor the metadata portion remaining in the original paragraph.
     doc.metadata.attach({
-      id: crypto.randomUUID(),
+      id: `${entry.id}:head`,
       namespace: metadata.namespace,
       payload,
       target: {
@@ -161,7 +161,7 @@ export default function App() {
     });
     // Anchor the metadata remainder in the new paragraph with the same payload.
     doc.metadata.attach({
-      id: crypto.randomUUID(),
+      id: `${entry.id}:tail`,
       namespace: metadata.namespace,
       payload,
       target: {
