@@ -4,6 +4,13 @@ import { createSuperDocUI } from 'superdoc/ui';
 import type { SelectionTarget, SuperDocUI, ViewportRect } from 'superdoc/ui';
 import 'superdoc/style.css';
 
+type DemoMetadataPayload = {
+  kind: 'manual-test';
+  label: string;
+  createdAt: string;
+  logicalId: string;
+};
+
 export default function App() {
   const mountRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -100,122 +107,67 @@ export default function App() {
   // newly created paragraph, then anchor both ranges with one logical ID.
   // ============================================================================
   const splitMetadataRangeAtCaret = useCallback(() => {
-      const superdoc = superdocRef.current;
-      const doc = superdoc?.activeEditor?.doc;
-      const capture = uiRef.current?.selection.capture();
-      const caret = capture?.selectionTarget ?? preservedSelectionRef.current;
-      if (!doc) {
-        console.warn('[metadata-enter] document unavailable');
-        return false;
-      }
-      if (!caret || caret.start.kind !== 'text' || caret.end.kind !== 'text') {
-        console.warn('[metadata-enter] no text caret', { capture, preserved: preservedSelectionRef.current });
-        return false;
-      }
-      if (caret.start.blockId !== caret.end.blockId || caret.start.offset !== caret.end.offset) {
-        console.warn('[metadata-enter] selection is not a collapsed caret', caret);
-        return false;
-      }
-      const caretPoint = caret.start;
+    const doc = superdocRef.current?.activeEditor?.doc;
+    const caret = uiRef.current?.selection.capture()?.selectionTarget ?? preservedSelectionRef.current;
+    if (!doc || !caret || caret.start.kind !== 'text' || caret.end.kind !== 'text') return false;
+    if (caret.start.offset !== caret.end.offset) return false;
+    const caretPoint = caret.start;
 
-      const entries = doc.metadata.list({ resolvedOnly: true }).items;
-      const entriesAtCaret = doc.metadata.list({ resolvedOnly: true, within: caret }).items;
-      let match = entriesAtCaret.length === 1 ? entriesAtCaret[0] : entries.find((entry) => {
-        const resolved = doc.metadata.resolve({ id: entry.id });
-        const target = resolved?.target;
-        if (!target || target.start.kind !== 'text' || target.end.kind !== 'text') return false;
-        return target.start.blockId === caretPoint.blockId
-          && target.end.blockId === caretPoint.blockId
-          && caretPoint.offset > target.start.offset
-          && caretPoint.offset < target.end.offset;
-      });
-      if (!match && entriesAtCaret.length > 0) {
-        match = entriesAtCaret[0];
-        console.info('[metadata-enter] using metadata resolved at the caret', {
-          caret,
-          resolved: doc.metadata.resolve({ id: match.id }),
-        });
-      }
-      if (!match) {
-        console.warn('[metadata-enter] caret is not strictly inside a metadata range', { caret, entries, entriesAtCaret });
-        return false;
-      }
+    const entry = doc.metadata.list({ resolvedOnly: true, within: caret }).items[0];
+    if (!entry) return false;
 
-      const metadata = doc.metadata.get({ id: match.id });
-      const resolved = doc.metadata.resolve({ id: match.id });
-      const target = resolved?.target;
-      if (!metadata || !target || target.start.kind !== 'text' || target.end.kind !== 'text') return false;
+    const metadata = doc.metadata.get({ id: entry.id })!;
+    const target = doc.metadata.resolve({ id: entry.id })!.target;
+    if (target.start.kind !== 'text' || target.end.kind !== 'text') return false;
 
-      const logicalId =
-        typeof metadata.payload === 'object'
-        && metadata.payload !== null
-        && 'logicalId' in metadata.payload
-        && typeof metadata.payload.logicalId === 'string'
-          ? metadata.payload.logicalId
-          : crypto.randomUUID();
-      const payload = typeof metadata.payload === 'object' && metadata.payload !== null
-        ? { ...metadata.payload, logicalId }
-        : { value: metadata.payload, logicalId };
-      const leftLength = caret.start.offset - target.start.offset;
-      const rightLength = target.end.offset - caret.start.offset;
-      const originalStart = target.start;
+    const payload = metadata.payload as DemoMetadataPayload;
+    const paragraph = doc.extract({}).blocks.find((block) => block.nodeId === caretPoint.blockId)!;
+    const block = doc.getNodeById({ nodeId: caretPoint.blockId }).address;
+    if (block.kind !== 'block') return false;
 
-      const extractedBlock = doc.extract({}).blocks.find((block) => block.nodeId === originalStart.blockId);
-      const blockNode = doc.getNodeById({ nodeId: originalStart.blockId });
-      if (!extractedBlock || blockNode.address.kind !== 'block') {
-        console.error('[metadata-enter] could not resolve the paragraph through the Document API');
-        return true;
-      }
-      const rightParagraphText = extractedBlock.text.slice(caretPoint.offset);
+    doc.metadata.remove({ id: entry.id });
+    doc.delete({
+      behavior: 'exact',
+      target: {
+        kind: 'selection',
+        start: caretPoint,
+        end: { kind: 'text', blockId: caretPoint.blockId, offset: paragraph.text.length },
+      },
+    });
 
-      const removed = doc.metadata.remove({ id: match.id });
-      console.info('[metadata-enter] remove anchor', removed);
-      if (!removed.success) return true;
+    const created = doc.create.paragraph({
+      at: { kind: 'after', target: block },
+      text: paragraph.text.slice(caretPoint.offset),
+    });
+    if (!created.success) return true;
 
-      const deletedTail = doc.delete({
-        behavior: 'exact',
-        target: {
-          kind: 'selection',
-          start: caretPoint,
-          end: { kind: 'text', blockId: caretPoint.blockId, offset: extractedBlock.text.length },
+    doc.metadata.attach({
+      id: crypto.randomUUID(),
+      namespace: metadata.namespace,
+      payload,
+      target: {
+        kind: 'selection',
+        start: target.start,
+        end: caretPoint,
+      },
+    });
+    doc.metadata.attach({
+      id: crypto.randomUUID(),
+      namespace: metadata.namespace,
+      payload,
+      target: {
+        kind: 'selection',
+        start: { kind: 'text', blockId: created.paragraph.nodeId, offset: 0 },
+        end: {
+          kind: 'text',
+          blockId: created.paragraph.nodeId,
+          offset: target.end.offset - caretPoint.offset,
         },
-      });
-      console.info('[metadata-enter] remove paragraph tail', deletedTail);
-      if (!deletedTail.success) return true;
+      },
+    });
 
-      const createdParagraph = doc.create.paragraph({
-        at: { kind: 'after', target: blockNode.address },
-        text: rightParagraphText,
-      });
-      console.info('[metadata-enter] create right paragraph', createdParagraph);
-      if (!createdParagraph.success) return true;
-      const newBlockId = createdParagraph.paragraph.nodeId;
-
-      const left = doc.metadata.attach({
-        id: `${match.id}-left-${crypto.randomUUID()}`,
-        namespace: metadata.namespace,
-        payload,
-        target: {
-          kind: 'selection',
-          start: originalStart,
-          end: { kind: 'text', blockId: originalStart.blockId, offset: originalStart.offset + leftLength },
-        },
-      });
-      console.info('[metadata-enter] attach left anchor', left);
-
-      const right = doc.metadata.attach({
-        id: `${match.id}-right-${crypto.randomUUID()}`,
-        namespace: metadata.namespace,
-        payload,
-        target: {
-          kind: 'selection',
-          start: { kind: 'text', blockId: newBlockId, offset: 0 },
-          end: { kind: 'text', blockId: newBlockId, offset: rightLength },
-        },
-      });
-      console.info('[metadata-enter] attach right anchor', right, { logicalId });
-      void refreshMetadataOutlines();
-      return true;
+    void refreshMetadataOutlines();
+    return true;
   }, [refreshMetadataOutlines]);
 
   // ============================================================================
@@ -289,7 +241,12 @@ export default function App() {
         id: `demo-finding-${crypto.randomUUID()}`,
         namespace: 'urn:superdoc:react-demo:findings',
         target,
-        payload: { kind: 'manual-test', label: 'React demo selection', createdAt: new Date().toISOString() },
+        payload: {
+          kind: 'manual-test',
+          label: 'React demo selection',
+          createdAt: new Date().toISOString(),
+          logicalId: crypto.randomUUID(),
+        } satisfies DemoMetadataPayload,
       });
       setMetadataStatus(result.success ? `Attached metadata: ${result.id}` : result.failure.message);
       await refreshMetadataOutlines();
