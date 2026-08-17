@@ -107,25 +107,31 @@ export default function App() {
   // newly created paragraph, then anchor both ranges with one logical ID.
   // ============================================================================
   const splitMetadataRangeAtCaret = useCallback(() => {
+    // Read the active document and collapsed caret selection.
     const doc = superdocRef.current?.activeEditor?.doc;
     const caret = uiRef.current?.selection.capture()?.selectionTarget ?? preservedSelectionRef.current;
     if (!doc || !caret || caret.start.kind !== 'text' || caret.end.kind !== 'text') return false;
     if (caret.start.offset !== caret.end.offset) return false;
     const caretPoint = caret.start;
 
+    // Find the metadata anchor containing the caret.
     const entry = doc.metadata.list({ resolvedOnly: true, within: caret }).items[0];
     if (!entry) return false;
 
+    // Resolve the original payload and anchored text range.
     const metadata = doc.metadata.get({ id: entry.id })!;
     const target = doc.metadata.resolve({ id: entry.id })!.target;
     if (target.start.kind !== 'text' || target.end.kind !== 'text') return false;
 
+    // Read the containing paragraph and its structural address.
     const payload = metadata.payload as DemoMetadataPayload;
     const paragraph = doc.extract({}).blocks.find((block) => block.nodeId === caretPoint.blockId)!;
     const block = doc.getNodeById({ nodeId: caretPoint.blockId }).address;
     if (block.kind !== 'block') return false;
 
+    // Remove the original SDT anchor before changing paragraph structure.
     doc.metadata.remove({ id: entry.id });
+    // Remove all paragraph text after the caret from the original block.
     doc.delete({
       behavior: 'exact',
       target: {
@@ -135,12 +141,14 @@ export default function App() {
       },
     });
 
+    // Recreate the removed text in a new paragraph after the original block.
     const created = doc.create.paragraph({
       at: { kind: 'after', target: block },
       text: paragraph.text.slice(caretPoint.offset),
     });
     if (!created.success) return true;
 
+    // Anchor the metadata portion remaining in the original paragraph.
     doc.metadata.attach({
       id: crypto.randomUUID(),
       namespace: metadata.namespace,
@@ -151,6 +159,7 @@ export default function App() {
         end: caretPoint,
       },
     });
+    // Anchor the metadata remainder in the new paragraph with the same payload.
     doc.metadata.attach({
       id: crypto.randomUUID(),
       namespace: metadata.namespace,
@@ -166,6 +175,7 @@ export default function App() {
       },
     });
 
+    // Repaint the visual metadata outlines after both anchors are attached.
     void refreshMetadataOutlines();
     return true;
   }, [refreshMetadataOutlines]);
