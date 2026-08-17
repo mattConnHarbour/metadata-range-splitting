@@ -94,6 +94,11 @@ export default function App() {
     };
   }, [ready, refreshMetadataOutlines, showMetadataOutlines]);
 
+  // ============================================================================
+  // ENTER KEY INTERCEPTION WORKAROUND
+  // V1 blocks a native paragraph split while the caret is inside an inline SDT.
+  // Capture Enter first so the anchor can be removed before asking V1 to split.
+  // ============================================================================
   useEffect(() => {
     if (!ready) return;
 
@@ -163,6 +168,11 @@ export default function App() {
       const rightLength = target.end.offset - caret.start.offset;
       const originalStart = target.start;
 
+      // ========================================================================
+      // METADATA RANGE SPLITTING WORKAROUND
+      // Unwrap the original anchor, restore the exact caret, and split the block.
+      // Then anchor both resulting ranges with payloads sharing one logical ID.
+      // ========================================================================
       event.preventDefault();
       event.stopPropagation();
       const removed = doc.metadata.remove({ id: match.id });
